@@ -1,19 +1,70 @@
 # PurelyMail MCP Server
 
-A Model Context Protocol (MCP) server that provides AI assistants with access to PurelyMail's email management API.
+A Model Context Protocol (MCP) server that provides AI assistants and automation tools (like n8n) with access to PurelyMail's email management API. Supports both stdio transport (for MCP clients) and HTTP/HTTPS transport (for REST API integrations).
 
-## Usage
+## Features
 
-**Run with npx (no installation needed):**
+- **Type-Safe API Integration**: Generated TypeScript client from PurelyMail's swagger specification
+- **Comprehensive Tool Coverage**: Manage users, domains, routing rules, billing, and password reset methods
+- **Multiple Transport Protocols**: 
+  - **stdio** transport for MCP clients (Claude Desktop, Claude Code)
+  - **HTTP/HTTPS** transport for REST API integrations (n8n, Zapier, custom apps)
+- **Docker Support**: Containerized deployment with Docker and docker-compose
+- **Resource-Grouped Tools**: Intelligent organization of API endpoints into logical tools
+- **Error Handling**: Robust error reporting and validation
+
+## Quick Start
+
+### Option 1: Docker (Recommended for HTTP Transport)
+
+**Quick Start - Copy and run:**
+
+Create a `docker-compose.yml` file:
+
+```yaml
+services:
+  purelymail-mcp-server:
+    image: skuldgerry/purelymail-mcp:1.0.0
+    container_name: purelymail-mcp-server
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PURELYMAIL_API_KEY=your-api-key-here
+      - TRANSPORT=http
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+```
+
+Then run:
+```bash
+docker-compose up -d
+```
+
+**Or run directly with Docker (one-liner):**
+```bash
+docker run -d -p 3000:3000 -e PURELYMAIL_API_KEY=your-api-key-here --name purelymail-mcp-server skuldgerry/purelymail-mcp:1.0.0
+```
+
+**Or with multi-line formatting:**
+```bash
+docker run -d \
+  -p 3000:3000 \
+  -e PURELYMAIL_API_KEY=your-api-key-here \
+  --name purelymail-mcp-server \
+  skuldgerry/purelymail-mcp:1.0.0
+```
+
+> **Note:** For advanced users, you can use a `.env` file with `PURELYMAIL_API_KEY=${PURELYMAIL_API_KEY}` in docker-compose.yml. The docker-compose.yml in the repository supports this.
+
+### Option 2: npx (No Installation - Stdio Transport Only)
 
 ```bash
 npx -y purelymail-mcp-server
-```
-
-**Or use Nix (via GitHub flake):**
-
-```bash
-nix run github:gui-wf/purelymail-mcp-server --quiet --refresh
 ```
 
 **Configure in your MCP client:**
@@ -32,15 +83,134 @@ nix run github:gui-wf/purelymail-mcp-server --quiet --refresh
 }
 ```
 
-## Features
+### Option 3: Nix (via GitHub Flake)
 
-- **Type-Safe API Integration**: Generated TypeScript client from PurelyMail's swagger specification
-- **Comprehensive Tool Coverage**: Manage users, domains, routing rules, billing, and password reset methods
-- **Mock Development Mode**: Test and develop safely without touching real data
-- **Resource-Grouped Tools**: Intelligent organization of API endpoints into logical tools
-- **Error Handling**: Robust error reporting and validation
+```bash
+nix run github:gui-wf/purelymail-mcp-server --quiet --refresh
+```
 
-## Quick Start
+## Transport Modes
+
+The server supports two transport modes:
+
+### 1. Stdio Transport (Default)
+For MCP clients like Claude Desktop and Claude Code. Uses standard input/output for communication.
+
+### 2. HTTP Transport
+For REST API integrations like n8n, Zapier, or custom applications. Exposes HTTP endpoints on port 3000.
+
+**Note:** Docker deployments use HTTP transport automatically.
+
+**HTTP Endpoints:**
+- `GET /health` - Health check endpoint
+- `GET /tools` - List all available tools
+- `POST /tools/:toolName` - Call a specific tool (arguments in body)
+- `POST /call` - Call a tool (with `name` and `arguments` in body)
+
+**Example HTTP Requests:**
+
+```bash
+# List all tools
+curl http://localhost:3000/tools
+
+# Call a tool via path parameter
+curl -X POST http://localhost:3000/tools/list_users \
+  -H "Content-Type: application/json" \
+  -d '{"arguments": {}}'
+
+# Call a tool via generic endpoint
+curl -X POST http://localhost:3000/call \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "create_user",
+    "arguments": {
+      "userName": "john",
+      "domainName": "example.com",
+      "password": "secure-password"
+    }
+  }'
+```
+
+## Docker Deployment
+
+### Using Docker Compose
+
+Simply create a `docker-compose.yml` with your API key and run:
+
+```bash
+docker-compose up -d
+```
+
+Check logs:
+```bash
+docker-compose logs -f
+```
+
+**Example docker-compose.yml:**
+```yaml
+services:
+  purelymail-mcp-server:
+    image: skuldgerry/purelymail-mcp:1.0.0
+    container_name: purelymail-mcp-server
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PURELYMAIL_API_KEY=your-api-key-here
+      - TRANSPORT=http
+```
+
+### Using Docker Run
+
+**One-liner:**
+```bash
+docker run -d -p 3000:3000 -e PURELYMAIL_API_KEY=your-api-key-here --name purelymail-mcp-server skuldgerry/purelymail-mcp:1.0.0
+```
+
+**Multi-line:**
+```bash
+docker run -d \
+  --name purelymail-mcp-server \
+  -p 3000:3000 \
+  -e PURELYMAIL_API_KEY=your-api-key-here \
+  skuldgerry/purelymail-mcp:1.0.0
+```
+
+### Docker Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `PURELYMAIL_API_KEY` | *required* - Your PurelyMail API key |
+
+## n8n Integration
+
+### Using HTTP Request Node
+
+1. **List Available Tools:**
+   - Method: `GET`
+   - URL: `http://your-server:3000/tools`
+
+2. **Call a Tool:**
+   - Method: `POST`
+   - URL: `http://your-server:3000/tools/{{$json.toolName}}`
+   - Body Type: `JSON`
+   - Body: `{"arguments": {...}}`
+
+3. **Generic Tool Call:**
+   - Method: `POST`
+   - URL: `http://your-server:3000/call`
+   - Body Type: `JSON`
+   - Body: `{"name": "tool_name", "arguments": {...}}`
+
+### Example n8n Workflow
+
+Create a workflow that:
+1. Triggers on a schedule
+2. Calls `list_users` to get all users
+3. Processes each user
+4. Calls `get_user` for detailed information
+
+## Quick Start (Local Development)
 
 ### 1. Prerequisites
 
@@ -48,28 +218,31 @@ nix run github:gui-wf/purelymail-mcp-server --quiet --refresh
 - PurelyMail API key (for production use)
 - Nix (for reproducible development environment - source only)
 
-### 2. Testing with Mock Data
+### 2. Production Setup
 
-```bash
-# Run in mock mode (no API key required)
-MOCK_MODE=true npm run dev
-
-# Test with MCP Inspector
-MOCK_MODE=true npm run inspector
-```
-
-### 3. Production Setup
-
+#### Stdio Transport (MCP Clients)
 ```bash
 # Set your PurelyMail API key
 export PURELYMAIL_API_KEY="your-api-key-here"
 
-# Run the server
+# Run the server (stdio mode)
 npm run dev
 
 # Or build and run
 npm run build
 node dist/index.js
+```
+
+#### HTTP Transport (REST API)
+```bash
+# Set your PurelyMail API key
+export PURELYMAIL_API_KEY="your-api-key-here"
+export TRANSPORT="http"
+
+# Run the server
+npm run dev
+
+# Server will be available at http://localhost:3000
 ```
 
 ## MCP Integration
@@ -162,7 +335,7 @@ For Claude Code, create a `.mcp.json` file in your project root:
 
 ### Other MCP Clients
 
-The server uses stdio transport and follows the MCP specification, making it compatible with any MCP-compliant client.
+The server supports stdio transport for MCP-compliant clients and HTTP transport for REST API integrations. By default, it uses stdio transport. Docker deployments automatically use HTTP transport.
 
 ## Available Tools
 
@@ -197,17 +370,22 @@ The server provides 19 individual tools, each corresponding to a specific Purely
 ### Billing
 - `check_account_credit` - Check current account credit balance
 
-## Features
-
-- **Type-Safe API Integration**: Generated TypeScript client from PurelyMail's swagger specification
-- **Comprehensive Tool Coverage**: Manage users, domains, routing rules, billing, and password reset methods
-- **Mock Development Mode**: Test and develop safely without touching real data
-- **Resource-Grouped Tools**: Intelligent organization of API endpoints into logical tools
-- **Error Handling**: Robust error reporting and validation
 
 ## Installation
 
-### Via npx (Recommended - No Installation)
+### Via Docker (Recommended)
+
+```bash
+# Pull from Docker Hub (when published)
+docker pull purelymail-mcp-server:latest
+
+# Or build from source
+git clone https://github.com/gui-wf/purelymail-mcp-server.git
+cd purelymail-mcp-server
+docker build -t purelymail-mcp-server .
+```
+
+### Via npx (Stdio Transport Only)
 ```bash
 npx -y purelymail-mcp-server
 ```
@@ -265,6 +443,7 @@ npm run build
 
 ### Example: Getting User Details
 
+**Via MCP (stdio):**
 ```json
 {
   "tool": "get_user",
@@ -274,17 +453,24 @@ npm run build
 }
 ```
 
+**Via HTTP API:**
+```bash
+curl -X POST http://localhost:3000/tools/get_user \
+  -H "Content-Type: application/json" \
+  -d '{"arguments": {"userName": "john@example.com"}}'
+```
+
+**Via n8n HTTP Request Node:**
+- URL: `http://localhost:3000/tools/get_user`
+- Method: `POST`
+- Body: `{"arguments": {"userName": "john@example.com"}}`
+
 ## Architecture Notes
 
 ### Type Safety
 - All API interactions use generated TypeScript types
 - Zero manual type definitions - everything derives from swagger spec
 - Automatic validation and error handling
-
-### Mock vs Real API
-- Mock mode uses swagger response examples when available
-- Fallback to sensible defaults for missing examples
-- Same interface for both modes ensures consistent behavior
 
 ### Error Handling
 - Structured error responses with context
