@@ -306,14 +306,19 @@ async function startHttpServer(server: Server, tools: any[]) {
     }
   });
 
-  // Main MCP endpoint - handles MCP protocol messages
+  // Main MCP endpoint - handles MCP protocol messages (JSON-RPC 2.0 format)
+  // Supports both JSON-RPC 2.0 format (for MCP clients) and simple REST format (for other clients)
   app.post('/mcp', async (req: Request, res: Response) => {
     try {
-      const { method, params, id } = req.body;
+      // Detect if this is a JSON-RPC 2.0 request or simple REST request
+      const isJsonRpc = req.body.jsonrpc === '2.0';
+      const method = req.body.method;
+      const params = req.body.params || {};
+      const id = req.body.id || null;
 
       // Handle initialize request (MCP protocol handshake)
       if (method === 'initialize') {
-        return res.json({
+        const response = {
           protocolVersion: '2024-11-05',
           capabilities: {
             tools: {}
@@ -322,18 +327,38 @@ async function startHttpServer(server: Server, tools: any[]) {
             name: 'purelymail-server',
             version: '1.0.0'
           }
-        });
+        };
+
+        if (isJsonRpc) {
+          return res.json({
+            jsonrpc: '2.0',
+            id: id,
+            result: response
+          });
+        } else {
+          return res.json(response);
+        }
       }
 
       // Handle tools/list request
       if (method === 'tools/list' || method === 'list_tools') {
-        return res.json({
+        const response = {
           tools: tools.map(tool => ({
             name: tool.name,
             description: tool.description,
             inputSchema: tool.inputSchema
           }))
-        });
+        };
+
+        if (isJsonRpc) {
+          return res.json({
+            jsonrpc: '2.0',
+            id: id,
+            result: response
+          });
+        } else {
+          return res.json(response);
+        }
       }
 
       // Handle tools/call request
@@ -342,45 +367,142 @@ async function startHttpServer(server: Server, tools: any[]) {
         const args = params?.arguments || params?.args || {};
 
         if (!toolName) {
-          return res.status(400).json({
-            error: 'Tool name is required',
-            availableTools: tools.map(t => t.name)
-          });
+          const errorResponse = {
+            code: -32602,
+            message: 'Tool name is required',
+            data: {
+              availableTools: tools.map(t => t.name)
+            }
+          };
+
+          if (isJsonRpc) {
+            return res.json({
+              jsonrpc: '2.0',
+              id: id,
+              error: errorResponse
+            });
+          } else {
+            return res.status(400).json({
+              error: errorResponse.message,
+              availableTools: errorResponse.data.availableTools
+            });
+          }
         }
 
         const tool = tools.find(t => t.name === toolName);
         if (!tool) {
-          return res.status(404).json({
-            error: `Unknown tool: ${toolName}`,
-            availableTools: tools.map(t => t.name)
-          });
+          const errorResponse = {
+            code: -32602,
+            message: `Unknown tool: ${toolName}`,
+            data: {
+              availableTools: tools.map(t => t.name)
+            }
+          };
+
+          if (isJsonRpc) {
+            return res.json({
+              jsonrpc: '2.0',
+              id: id,
+              error: errorResponse
+            });
+          } else {
+            return res.status(404).json({
+              error: errorResponse.message,
+              availableTools: errorResponse.data.availableTools
+            });
+          }
         }
 
         try {
           const result = await tool.execute(args);
-          return res.json({
-            success: true,
-            result: result
-          });
+          const response = {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(result, null, 2)
+              }
+            ]
+          };
+
+          if (isJsonRpc) {
+            return res.json({
+              jsonrpc: '2.0',
+              id: id,
+              result: response
+            });
+          } else {
+            return res.json({
+              success: true,
+              result: result
+            });
+          }
         } catch (error: any) {
-          return res.status(500).json({
-            success: false,
-            error: error.message,
-            details: error.stack
-          });
+          const errorResponse = {
+            code: -32000,
+            message: error.message,
+            data: {
+              details: error.stack
+            }
+          };
+
+          if (isJsonRpc) {
+            return res.json({
+              jsonrpc: '2.0',
+              id: id,
+              error: errorResponse
+            });
+          } else {
+            return res.status(500).json({
+              success: false,
+              error: error.message,
+              details: error.stack
+            });
+          }
         }
       }
 
       // Unknown method
-      return res.status(400).json({
-        error: `Unknown method: ${method}`,
-        supportedMethods: ['initialize', 'tools/list', 'tools/call', 'list_tools', 'call_tool']
-      });
+      const errorResponse = {
+        code: -32601,
+        message: `Unknown method: ${method}`,
+        data: {
+          supportedMethods: ['initialize', 'tools/list', 'tools/call', 'list_tools', 'call_tool']
+        }
+      };
+
+      if (isJsonRpc) {
+        return res.json({
+          jsonrpc: '2.0',
+          id: id,
+          error: errorResponse
+        });
+      } else {
+        return res.status(400).json({
+          error: errorResponse.message,
+          supportedMethods: errorResponse.data.supportedMethods
+        });
+      }
     } catch (error: any) {
-      return res.status(500).json({
-        error: error.message,
-        details: error.stack
-      });
+      const errorResponse = {
+        code: -32700,
+        message: 'Parse error',
+        data: {
+          details: error.message
+        }
+      };
+
+      if (req.body?.jsonrpc === '2.0') {
+        return res.json({
+          jsonrpc: '2.0',
+          id: req.body?.id || null,
+          error: errorResponse
+        });
+      } else {
+        return res.status(500).json({
+          error: error.message,
+          details: error.stack
+        });
+      }
     }
   });
 
@@ -553,6 +675,7 @@ async function startHttpServer(server: Server, tools: any[]) {
     console.error(`  - {tool: "tool_name", args: {...}}`);
     console.error(`  - {arguments: {...}} (when using path parameter)`);
     console.error(`  - POST /mcp with {method: "tools/list"} or {method: "tools/call", params: {...}}`);
+    console.error(`  - POST /mcp with JSON-RPC 2.0 format: {jsonrpc: "2.0", method: "...", params: {...}, id: ...}`);
   });
 }
 
