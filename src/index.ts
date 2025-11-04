@@ -309,7 +309,21 @@ async function startHttpServer(server: Server, tools: any[]) {
   // Main MCP endpoint - handles MCP protocol messages
   app.post('/mcp', async (req: Request, res: Response) => {
     try {
-      const { method, params } = req.body;
+      const { method, params, id } = req.body;
+
+      // Handle initialize request (MCP protocol handshake)
+      if (method === 'initialize') {
+        return res.json({
+          protocolVersion: '2024-11-05',
+          capabilities: {
+            tools: {}
+          },
+          serverInfo: {
+            name: 'purelymail-server',
+            version: '1.0.0'
+          }
+        });
+      }
 
       // Handle tools/list request
       if (method === 'tools/list' || method === 'list_tools') {
@@ -360,7 +374,7 @@ async function startHttpServer(server: Server, tools: any[]) {
       // Unknown method
       return res.status(400).json({
         error: `Unknown method: ${method}`,
-        supportedMethods: ['tools/list', 'tools/call', 'list_tools', 'call_tool']
+        supportedMethods: ['initialize', 'tools/list', 'tools/call', 'list_tools', 'call_tool']
       });
     } catch (error: any) {
       return res.status(500).json({
