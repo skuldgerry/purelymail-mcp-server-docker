@@ -306,6 +306,70 @@ async function startHttpServer(server: Server, tools: any[]) {
     }
   });
 
+  // Main MCP endpoint - handles MCP protocol messages
+  app.post('/mcp', async (req: Request, res: Response) => {
+    try {
+      const { method, params } = req.body;
+
+      // Handle tools/list request
+      if (method === 'tools/list' || method === 'list_tools') {
+        return res.json({
+          tools: tools.map(tool => ({
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema
+          }))
+        });
+      }
+
+      // Handle tools/call request
+      if (method === 'tools/call' || method === 'call_tool') {
+        const toolName = params?.name || params?.toolName;
+        const args = params?.arguments || params?.args || {};
+
+        if (!toolName) {
+          return res.status(400).json({
+            error: 'Tool name is required',
+            availableTools: tools.map(t => t.name)
+          });
+        }
+
+        const tool = tools.find(t => t.name === toolName);
+        if (!tool) {
+          return res.status(404).json({
+            error: `Unknown tool: ${toolName}`,
+            availableTools: tools.map(t => t.name)
+          });
+        }
+
+        try {
+          const result = await tool.execute(args);
+          return res.json({
+            success: true,
+            result: result
+          });
+        } catch (error: any) {
+          return res.status(500).json({
+            success: false,
+            error: error.message,
+            details: error.stack
+          });
+        }
+      }
+
+      // Unknown method
+      return res.status(400).json({
+        error: `Unknown method: ${method}`,
+        supportedMethods: ['tools/list', 'tools/call', 'list_tools', 'call_tool']
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        error: error.message,
+        details: error.stack
+      });
+    }
+  });
+
   // MCP prefix endpoints (for MCP protocol clients)
   app.get('/mcp/tools', (_req: Request, res: Response) => {
     res.json({
@@ -462,6 +526,7 @@ async function startHttpServer(server: Server, tools: any[]) {
     console.error(`  POST /tools/call - Call tool (generic)`);
     console.error(`  POST /call - Call a tool (with name in body)`);
     console.error(`  POST /invoke - Call tool (alternative format)`);
+    console.error(`  POST /mcp - Main MCP protocol endpoint (handles tools/list and tools/call)`);
     console.error(`  GET  /mcp/tools - List tools (MCP prefix)`);
     console.error(`  POST /mcp/tools - List tools (MCP prefix)`);
     console.error(`  POST /mcp/tools/:toolName - Call tool (MCP prefix)`);
@@ -473,6 +538,7 @@ async function startHttpServer(server: Server, tools: any[]) {
     console.error(`  - {method: "tool_name", params: {...}}`);
     console.error(`  - {tool: "tool_name", args: {...}}`);
     console.error(`  - {arguments: {...}} (when using path parameter)`);
+    console.error(`  - POST /mcp with {method: "tools/list"} or {method: "tools/call", params: {...}}`);
   });
 }
 
