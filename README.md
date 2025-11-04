@@ -102,23 +102,56 @@ For REST API integrations like n8n, Zapier, or custom applications. Exposes HTTP
 **Note:** Docker deployments use HTTP transport automatically.
 
 **HTTP Endpoints:**
+
+**Root Level Endpoints:**
 - `GET /health` - Health check endpoint
-- `GET /tools` - List all available tools
+- `GET /tools` - List all available tools (REST API)
+- `POST /tools` - List all available tools (MCP protocol)
 - `POST /tools/:toolName` - Call a specific tool (arguments in body)
+- `POST /tools/:toolName/call` - Call tool (alternative format)
+- `POST /tools/call` - Call tool (generic, tool name in body)
 - `POST /call` - Call a tool (with `name` and `arguments` in body)
+- `POST /invoke` - Call tool (alternative format)
+
+**MCP Prefix Endpoints:**
+- `GET /mcp/tools` - List all available tools (MCP prefix)
+- `POST /mcp/tools` - List all available tools (MCP prefix)
+- `POST /mcp/tools/:toolName` - Call a specific tool (MCP prefix)
+- `POST /mcp/tools/:toolName/call` - Call tool (MCP prefix, alternative format)
+- `POST /mcp/call` - Call tool (MCP prefix, tool name in body)
+- `POST /mcp/invoke` - Call tool (MCP prefix, alternative format)
+
+**Request Formats Supported:**
+- `{name: "tool_name", arguments: {...}}` - Standard MCP format
+- `{method: "tool_name", params: {...}}` - Alternative format
+- `{tool: "tool_name", args: {...}}` - Alternative format
+- `{arguments: {...}}` - When using path parameter `/tools/:toolName`
 
 **Example HTTP Requests:**
 
 ```bash
-# List all tools
+# List all tools (GET - browser-friendly)
 curl http://localhost:3000/tools
+
+# List all tools (POST - MCP protocol)
+curl -X POST http://localhost:3000/tools \
+  -H "Content-Type: application/json"
+
+# List tools with MCP prefix
+curl -X POST http://localhost:3000/mcp/tools \
+  -H "Content-Type: application/json"
 
 # Call a tool via path parameter
 curl -X POST http://localhost:3000/tools/list_users \
   -H "Content-Type: application/json" \
   -d '{"arguments": {}}'
 
-# Call a tool via generic endpoint
+# Call a tool via path parameter (alternative format)
+curl -X POST http://localhost:3000/tools/list_users/call \
+  -H "Content-Type: application/json" \
+  -d '{"params": {}}'
+
+# Call a tool via generic endpoint (standard format)
 curl -X POST http://localhost:3000/call \
   -H "Content-Type: application/json" \
   -d '{
@@ -128,6 +161,31 @@ curl -X POST http://localhost:3000/call \
       "domainName": "example.com",
       "password": "secure-password"
     }
+  }'
+
+# Call a tool via generic endpoint (alternative format)
+curl -X POST http://localhost:3000/call \
+  -H "Content-Type: application/json" \
+  -d '{
+    "method": "create_user",
+    "params": {
+      "userName": "john",
+      "domainName": "example.com",
+      "password": "secure-password"
+    }
+  }'
+
+# Call a tool with MCP prefix
+curl -X POST http://localhost:3000/mcp/tools/create_user \
+  -H "Content-Type: application/json" \
+  -d '{"arguments": {"userName": "john", "domainName": "example.com"}}'
+
+# Call a tool via invoke endpoint
+curl -X POST http://localhost:3000/invoke \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tool": "list_users",
+    "args": {}
   }'
 ```
 
@@ -186,29 +244,55 @@ docker run -d \
 
 ### Using HTTP Request Node
 
-1. **List Available Tools:**
-   - Method: `GET`
-   - URL: `http://your-server:3000/tools`
+**List Available Tools:**
+- Method: `GET` or `POST`
+- URL: `http://your-server:3000/tools`
+- Or with MCP prefix: `http://your-server:3000/mcp/tools`
 
-2. **Call a Tool:**
-   - Method: `POST`
-   - URL: `http://your-server:3000/tools/{{$json.toolName}}`
-   - Body Type: `JSON`
-   - Body: `{"arguments": {...}}`
+**Call a Tool (Path Parameter):**
+- Method: `POST`
+- URL: `http://your-server:3000/tools/{{$json.toolName}}`
+- Body Type: `JSON`
+- Body: `{"arguments": {...}}` or `{"params": {...}}`
 
-3. **Generic Tool Call:**
-   - Method: `POST`
-   - URL: `http://your-server:3000/call`
-   - Body Type: `JSON`
-   - Body: `{"name": "tool_name", "arguments": {...}}`
+**Call a Tool (Generic Endpoint):**
+- Method: `POST`
+- URL: `http://your-server:3000/call`
+- Body Type: `JSON`
+- Body: `{"name": "tool_name", "arguments": {...}}`
+
+**Alternative Formats:**
+- URL: `http://your-server:3000/invoke`
+- Body: `{"method": "tool_name", "params": {...}}`
+
+- URL: `http://your-server:3000/mcp/call`
+- Body: `{"tool": "tool_name", "args": {...}}`
 
 ### Example n8n Workflow
 
 Create a workflow that:
 1. Triggers on a schedule
-2. Calls `list_users` to get all users
-3. Processes each user
-4. Calls `get_user` for detailed information
+2. Calls `POST /tools` or `GET /tools` to list available tools
+3. Calls `POST /tools/list_users` to get all users
+4. Processes each user
+5. Calls `POST /tools/get_user` with user details for more information
+
+**Example n8n HTTP Request Node Configuration:**
+
+**Node 1 - List Tools:**
+- Method: `POST`
+- URL: `http://localhost:3000/tools`
+- Body: Empty or `{}`
+
+**Node 2 - Call Tool:**
+- Method: `POST`
+- URL: `http://localhost:3000/tools/list_users`
+- Body: `{"arguments": {}}`
+
+**Node 3 - Call Tool (Alternative):**
+- Method: `POST`
+- URL: `http://localhost:3000/call`
+- Body: `{"name": "get_user", "arguments": {"userName": "user@example.com"}}`
 
 ## Quick Start (Local Development)
 

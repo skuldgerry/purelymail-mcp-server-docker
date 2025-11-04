@@ -103,15 +103,26 @@ async function startHttpServer(server: Server, tools: any[]) {
   const host = '0.0.0.0';
 
   // Middleware
-  app.use(cors());
+  app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    credentials: true
+  }));
   app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
+  
+  // Handle preflight requests
+  app.options('*', (_req: Request, res: Response) => {
+    res.sendStatus(200);
+  });
 
   // Health check endpoint
   app.get('/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok', service: 'purelymail-mcp-server' });
   });
 
-  // List available tools
+  // List available tools (GET for REST API, POST for MCP protocol)
   app.get('/tools', (_req: Request, res: Response) => {
     res.json({
       tools: tools.map(tool => ({
@@ -122,10 +133,50 @@ async function startHttpServer(server: Server, tools: any[]) {
     });
   });
 
+  // POST /tools for MCP protocol clients
+  app.post('/tools', (_req: Request, res: Response) => {
+    res.json({
+      tools: tools.map(tool => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema
+      }))
+    });
+  });
+
   // Call a tool endpoint (for n8n and other integrations)
+  // Support multiple formats: /tools/:toolName, /tools/:toolName/call, /tools/call/:toolName
   app.post('/tools/:toolName', async (req: Request, res: Response) => {
     const toolName = req.params.toolName;
-    const args = req.body.arguments || req.body || {};
+    // Support multiple request formats
+    const args = req.body.arguments || req.body.params || req.body || {};
+
+    const tool = tools.find(t => t.name === toolName);
+    if (!tool) {
+      return res.status(404).json({
+        error: `Unknown tool: ${toolName}`,
+        availableTools: tools.map(t => t.name)
+      });
+    }
+
+    try {
+      const result = await tool.execute(args);
+      res.json({
+        success: true,
+        result: result
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message,
+        details: error.stack
+      });
+    }
+  });
+
+  app.post('/tools/:toolName/call', async (req: Request, res: Response) => {
+    const toolName = req.params.toolName;
+    const args = req.body.arguments || req.body.params || req.body || {};
 
     const tool = tools.find(t => t.name === toolName);
     if (!tool) {
@@ -151,8 +202,45 @@ async function startHttpServer(server: Server, tools: any[]) {
   });
 
   // Generic tool call endpoint (alternative to /tools/:toolName)
+  // Support multiple formats: /call, /tools/call, /invoke
   app.post('/call', async (req: Request, res: Response) => {
-    const { name, arguments: args } = req.body;
+    // Support multiple request formats: {name, arguments}, {method, params}, {tool, args}
+    const name = req.body.name || req.body.method || req.body.tool;
+    const args = req.body.arguments || req.body.params || req.body.args || {};
+
+    if (!name) {
+      return res.status(400).json({
+        error: 'Tool name is required (use "name", "method", or "tool" field)',
+        availableTools: tools.map(t => t.name)
+      });
+    }
+
+    const tool = tools.find(t => t.name === name);
+    if (!tool) {
+      return res.status(404).json({
+        error: `Unknown tool: ${name}`,
+        availableTools: tools.map(t => t.name)
+      });
+    }
+
+    try {
+      const result = await tool.execute(args);
+      res.json({
+        success: true,
+        result: result
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message,
+        details: error.stack
+      });
+    }
+  });
+
+  app.post('/tools/call', async (req: Request, res: Response) => {
+    const name = req.body.name || req.body.method || req.body.tool;
+    const args = req.body.arguments || req.body.params || req.body.args || {};
 
     if (!name) {
       return res.status(400).json({
@@ -170,7 +258,185 @@ async function startHttpServer(server: Server, tools: any[]) {
     }
 
     try {
-      const result = await tool.execute(args || {});
+      const result = await tool.execute(args);
+      res.json({
+        success: true,
+        result: result
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message,
+        details: error.stack
+      });
+    }
+  });
+
+  app.post('/invoke', async (req: Request, res: Response) => {
+    const name = req.body.name || req.body.method || req.body.tool;
+    const args = req.body.arguments || req.body.params || req.body.args || {};
+
+    if (!name) {
+      return res.status(400).json({
+        error: 'Tool name is required',
+        availableTools: tools.map(t => t.name)
+      });
+    }
+
+    const tool = tools.find(t => t.name === name);
+    if (!tool) {
+      return res.status(404).json({
+        error: `Unknown tool: ${name}`,
+        availableTools: tools.map(t => t.name)
+      });
+    }
+
+    try {
+      const result = await tool.execute(args);
+      res.json({
+        success: true,
+        result: result
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message,
+        details: error.stack
+      });
+    }
+  });
+
+  // MCP prefix endpoints (for MCP protocol clients)
+  app.get('/mcp/tools', (_req: Request, res: Response) => {
+    res.json({
+      tools: tools.map(tool => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema
+      }))
+    });
+  });
+
+  app.post('/mcp/tools', (_req: Request, res: Response) => {
+    res.json({
+      tools: tools.map(tool => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema
+      }))
+    });
+  });
+
+
+  app.post('/mcp/call', async (req: Request, res: Response) => {
+    const name = req.body.name || req.body.method || req.body.tool;
+    const args = req.body.arguments || req.body.params || req.body.args || {};
+
+    if (!name) {
+      return res.status(400).json({
+        error: 'Tool name is required',
+        availableTools: tools.map(t => t.name)
+      });
+    }
+
+    const tool = tools.find(t => t.name === name);
+    if (!tool) {
+      return res.status(404).json({
+        error: `Unknown tool: ${name}`,
+        availableTools: tools.map(t => t.name)
+      });
+    }
+
+    try {
+      const result = await tool.execute(args);
+      res.json({
+        success: true,
+        result: result
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message,
+        details: error.stack
+      });
+    }
+  });
+
+  app.post('/mcp/tools/:toolName', async (req: Request, res: Response) => {
+    const toolName = req.params.toolName;
+    const args = req.body.arguments || req.body.params || req.body || {};
+
+    const tool = tools.find(t => t.name === toolName);
+    if (!tool) {
+      return res.status(404).json({
+        error: `Unknown tool: ${toolName}`,
+        availableTools: tools.map(t => t.name)
+      });
+    }
+
+    try {
+      const result = await tool.execute(args);
+      res.json({
+        success: true,
+        result: result
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message,
+        details: error.stack
+      });
+    }
+  });
+
+  app.post('/mcp/tools/:toolName/call', async (req: Request, res: Response) => {
+    const toolName = req.params.toolName;
+    const args = req.body.arguments || req.body.params || req.body || {};
+
+    const tool = tools.find(t => t.name === toolName);
+    if (!tool) {
+      return res.status(404).json({
+        error: `Unknown tool: ${toolName}`,
+        availableTools: tools.map(t => t.name)
+      });
+    }
+
+    try {
+      const result = await tool.execute(args);
+      res.json({
+        success: true,
+        result: result
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message,
+        details: error.stack
+      });
+    }
+  });
+
+  app.post('/mcp/invoke', async (req: Request, res: Response) => {
+    const name = req.body.name || req.body.method || req.body.tool;
+    const args = req.body.arguments || req.body.params || req.body.args || {};
+
+    if (!name) {
+      return res.status(400).json({
+        error: 'Tool name is required',
+        availableTools: tools.map(t => t.name)
+      });
+    }
+
+    const tool = tools.find(t => t.name === name);
+    if (!tool) {
+      return res.status(404).json({
+        error: `Unknown tool: ${name}`,
+        availableTools: tools.map(t => t.name)
+      });
+    }
+
+    try {
+      const result = await tool.execute(args);
       res.json({
         success: true,
         result: result
@@ -189,9 +455,24 @@ async function startHttpServer(server: Server, tools: any[]) {
     console.error(`HTTP server listening on http://${host}:${port}`);
     console.error(`Available endpoints:`);
     console.error(`  GET  /health - Health check`);
-    console.error(`  GET  /tools - List all available tools`);
+    console.error(`  GET  /tools - List all available tools (REST)`);
+    console.error(`  POST /tools - List all available tools (MCP protocol)`);
     console.error(`  POST /tools/:toolName - Call a specific tool`);
+    console.error(`  POST /tools/:toolName/call - Call tool (alternative format)`);
+    console.error(`  POST /tools/call - Call tool (generic)`);
     console.error(`  POST /call - Call a tool (with name in body)`);
+    console.error(`  POST /invoke - Call tool (alternative format)`);
+    console.error(`  GET  /mcp/tools - List tools (MCP prefix)`);
+    console.error(`  POST /mcp/tools - List tools (MCP prefix)`);
+    console.error(`  POST /mcp/tools/:toolName - Call tool (MCP prefix)`);
+    console.error(`  POST /mcp/tools/:toolName/call - Call tool (MCP prefix)`);
+    console.error(`  POST /mcp/call - Call tool (MCP prefix)`);
+    console.error(`  POST /mcp/invoke - Call tool (MCP prefix)`);
+    console.error(`\nRequest formats supported:`);
+    console.error(`  - {name: "tool_name", arguments: {...}}`);
+    console.error(`  - {method: "tool_name", params: {...}}`);
+    console.error(`  - {tool: "tool_name", args: {...}}`);
+    console.error(`  - {arguments: {...}} (when using path parameter)`);
   });
 }
 
